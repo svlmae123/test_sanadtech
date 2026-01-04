@@ -6,14 +6,9 @@ venv/
 env/
 *.egg-info/
 
-# Modèles (trop gros)
+# Modèles (trop gros pour GitHub)
 *.pth
 *.pt
-models/
-
-# Outputs de test
-output/
-test_output*/
 
 # IDE
 .vscode/
@@ -23,11 +18,3 @@ test_output*/
 # OS
 .DS_Store
 Thumbs.db
-
-# Images temporaires (garde les samples)
-*.png
-*.jpg
-*.jpeg
-!sample*.png
-!sample*.jpg
-!example*.png

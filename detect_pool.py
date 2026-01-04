@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Pool Detection Script for Aerial Images
-Detects swimming pools and generates coordinates and outlined image
-Optimized to reduce false positives
+Pool Detection Script for Aerial Images - BALANCED VERSION
+Detects swimming pools with precise contours and detailed feedback
 """
 
 import cv2
@@ -12,21 +11,181 @@ import sys
 from pathlib import Path
 
 
-def detect_pools(image_path, output_dir="output"):
+def detect_pool_water(img):
     """
-    Detect swimming pools in aerial image with strict filtering
-    
-    Args:
-        image_path: Path to input aerial image
-        output_dir: Directory for output files
-    
-    Returns:
-        bool: True if at least one pool detected successfully
+    Detect pool water with balanced color filtering
     """
-    # Create output directory
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    
+    # Broader but still focused color ranges for pool water
+    # Range 1: Cyan/turquoise (most common pool color)
+    lower_cyan = np.array([80, 60, 80])
+    upper_cyan = np.array([100, 255, 255])
+    mask_cyan = cv2.inRange(hsv, lower_cyan, upper_cyan)
+    
+    # Range 2: Blue water
+    lower_blue = np.array([95, 80, 90])
+    upper_blue = np.array([110, 255, 255])
+    mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
+    
+    # Range 3: Light cyan (sun reflections)
+    lower_light = np.array([85, 40, 150])
+    upper_light = np.array([100, 150, 255])
+    mask_light = cv2.inRange(hsv, lower_light, upper_light)
+    
+    # Combine all masks
+    mask = cv2.bitwise_or(mask_cyan, mask_blue)
+    mask = cv2.bitwise_or(mask, mask_light)
+    
+    return mask
+
+
+def clean_mask(mask):
+    """
+    Clean mask with careful morphology
+    """
+    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (4, 4))
+    
+    # Remove small noise
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+    
+    # Fill small gaps within pools (but not merge separate pools)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=1)
+    
+    return mask
+
+
+def filter_pool_contours(contours, img_shape, verbose=True):
+    """
+    Apply balanced geometric filters with detailed feedback
+    """
+    image_area = img_shape[0] * img_shape[1]
+    valid_pools = []
+    
+    if verbose:
+        print(f"\n{'='*60}")
+        print("Analyzing contours...")
+        print(f"{'='*60}")
+    
+    for idx, contour in enumerate(contours, 1):
+        area = cv2.contourArea(contour)
+        
+        # More lenient size constraints
+        min_area = image_area * 0.001  # 0.1% of image
+        max_area = image_area * 0.20   # 20% of image
+        
+        if verbose:
+            print(f"\nContour #{idx}:")
+            print(f"  Area: {area:.2f} pixels ({area/image_area*100:.2f}% of image)")
+        
+        if area < min_area:
+            if verbose:
+                print(f"  ❌ REJECTED: Too small (min: {min_area:.2f})")
+            continue
+        
+        if area > max_area:
+            if verbose:
+                print(f"  ❌ REJECTED: Too large (max: {max_area:.2f})")
+            continue
+        
+        # Perimeter check
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter == 0:
+            if verbose:
+                print(f"  ❌ REJECTED: Invalid perimeter")
+            continue
+        
+        # Compactness - how circular/square the shape is
+        compactness = 4 * np.pi * area / (perimeter * perimeter)
+        if verbose:
+            print(f"  Compactness: {compactness:.3f} (circle=1.0, square=0.785)")
+        
+        if compactness < 0.20:  # More lenient
+            if verbose:
+                print(f"  ❌ REJECTED: Not compact enough (min: 0.20)")
+            continue
+        
+        # Aspect ratio
+        x, y, w, h = cv2.boundingRect(contour)
+        aspect_ratio = max(w, h) / min(w, h) if min(w, h) > 0 else 0
+        if verbose:
+            print(f"  Aspect ratio: {aspect_ratio:.2f} (1.0=square)")
+        
+        if aspect_ratio > 5:  # More lenient
+            if verbose:
+                print(f"  ❌ REJECTED: Too elongated (max: 5)")
+            continue
+        
+        # Solidity - how "solid" vs "hollow" the shape is
+        hull = cv2.convexHull(contour)
+        hull_area = cv2.contourArea(hull)
+        if hull_area > 0:
+            solidity = area / hull_area
+            if verbose:
+                print(f"  Solidity: {solidity:.3f} (1.0=perfect convex)")
+            
+            if solidity < 0.60:  # More lenient
+                if verbose:
+                    print(f"  ❌ REJECTED: Too irregular (min: 0.60)")
+                continue
+        
+        # All checks passed!
+        if verbose:
+            print(f"  ✅ ACCEPTED as pool")
+        
+        valid_pools.append(contour)
+    
+    if verbose:
+        print(f"\n{'='*60}")
+        print(f"Result: {len(valid_pools)} pool(s) validated")
+        print(f"{'='*60}\n")
+    
+    return valid_pools
+
+
+def refine_pool_boundary(contour, img, mask):
+    """
+    Refine pool boundary using edge detection
+    """
+    # Get bounding box with padding
+    x, y, w, h = cv2.boundingRect(contour)
+    padding = 10
+    x1 = max(0, x - padding)
+    y1 = max(0, y - padding)
+    x2 = min(img.shape[1], x + w + padding)
+    y2 = min(img.shape[0], y + h + padding)
+    
+    # Extract ROI
+    roi_mask = mask[y1:y2, x1:x2]
+    
+    # Find contour in ROI with more detail
+    roi_contours, _ = cv2.findContours(roi_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    
+    if roi_contours:
+        # Get largest contour
+        refined = max(roi_contours, key=cv2.contourArea)
+        
+        # Adjust back to original coordinates
+        refined = refined + np.array([x1, y1])
+        
+        # Minimal smoothing to preserve detail
+        epsilon = 0.002 * cv2.arcLength(refined, True)
+        refined = cv2.approxPolyDP(refined, epsilon, True)
+        
+        return refined
+    
+    # Fallback
+    epsilon = 0.003 * cv2.arcLength(contour, True)
+    return cv2.approxPolyDP(contour, epsilon, True)
+
+
+def detect_pools(image_path, output_dir="output", verbose=True):
+    """
+    Detect swimming pools with balanced precision
+    """
     Path(output_dir).mkdir(exist_ok=True)
     
-    # Read image
     img = cv2.imread(image_path)
     if img is None:
         print(f"Error: Cannot read image from {image_path}")
@@ -34,98 +193,55 @@ def detect_pools(image_path, output_dir="output"):
     
     print(f"Processing image: {image_path}")
     print(f"Image shape: {img.shape}")
+    print(f"Image area: {img.shape[0] * img.shape[1]} pixels")
     
-    # Convert to different color spaces
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    # Step 1: Detect pool water
+    mask = detect_pool_water(img)
     
-    # Define strict blue/cyan color ranges for pool water
-    # Focused on bright, saturated blue/cyan typical of pool water
-    lower_cyan = np.array([85, 80, 80])    # More saturated
-    upper_cyan = np.array([100, 255, 255])
+    # Step 2: Clean mask
+    mask_clean = clean_mask(mask)
     
-    lower_blue = np.array([95, 100, 100])  # Even more strict
-    upper_blue = np.array([115, 255, 255])
-    
-    # Create masks
-    mask_cyan = cv2.inRange(hsv, lower_cyan, upper_cyan)
-    mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
-    mask = cv2.bitwise_or(mask_cyan, mask_blue)
-    
-    # Morphological operations - LESS aggressive to keep pools separated
-    kernel_small = np.ones((3, 3), np.uint8)
-    kernel_medium = np.ones((5, 5), np.uint8)
-    
-    # Remove small noise
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
-    # Fill small gaps WITHIN pools but don't merge separate pools
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=2)
-    
-    # Find contours
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Step 3: Find contours with maximum detail
+    contours, _ = cv2.findContours(mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     
     if not contours:
         print("Warning: No pools detected in the image")
         return False
     
-    # STRICT filtering criteria for pools
-    image_area = img.shape[0] * img.shape[1]
-    min_area = image_area * 0.002   # At least 0.2% of image
-    max_area = image_area * 0.15    # At most 15% of image
+    print(f"Found {len(contours)} initial contours")
     
-    valid_pools = []
-    
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        
-        # Check area
-        if area < min_area or area > max_area:
-            continue
-        
-        # Check shape compactness (pools are usually compact shapes)
-        perimeter = cv2.arcLength(contour, True)
-        if perimeter == 0:
-            continue
-        
-        compactness = 4 * np.pi * area / (perimeter * perimeter)
-        # Pools typically have compactness > 0.3 (rectangles ~0.785, circles = 1.0)
-        if compactness < 0.25:
-            continue
-        
-        # Check aspect ratio (pools shouldn't be too elongated)
-        x, y, w, h = cv2.boundingRect(contour)
-        aspect_ratio = max(w, h) / min(w, h) if min(w, h) > 0 else 0
-        if aspect_ratio > 4:  # Too elongated, probably not a pool
-            continue
-        
-        # Check if shape is reasonably convex (pools don't have complex shapes)
-        hull = cv2.convexHull(contour)
-        hull_area = cv2.contourArea(hull)
-        if hull_area > 0:
-            solidity = area / hull_area
-            if solidity < 0.7:  # Too irregular
-                continue
-        
-        valid_pools.append(contour)
+    # Step 4: Filter contours
+    valid_pools = filter_pool_contours(contours, img.shape, verbose=verbose)
     
     if not valid_pools:
-        print("Warning: No valid pool contours found after filtering")
+        print("\n⚠️  No valid pools found. Try:")
+        print("   1. Check debug_mask.jpg - is the pool water white?")
+        print("   2. If pool is missing: color detection needs adjustment")
+        print("   3. If pool is there but rejected: filters are too strict")
         return False
     
-    # Sort by area (largest first)
+    # Sort by area
     valid_pools = sorted(valid_pools, key=cv2.contourArea, reverse=True)
     
-    print(f"Number of pools detected: {len(valid_pools)}")
+    print(f"✅ {len(valid_pools)} pool(s) detected successfully!")
     
-    # Save coordinates for ALL detected pools
+    # Step 5: Refine boundaries
+    refined_pools = []
+    for idx, contour in enumerate(valid_pools):
+        if verbose:
+            print(f"Refining pool #{idx+1} boundary...")
+        refined = refine_pool_boundary(contour, img, mask_clean)
+        refined_pools.append(refined)
+    
+    # Step 6: Save coordinates
     coords_file = Path(output_dir) / "coordinates.txt"
     with open(coords_file, 'w') as f:
         f.write(f"Swimming Pool Detection Results\n")
         f.write(f"Image: {Path(image_path).name}\n")
-        f.write(f"Total Pools Detected: {len(valid_pools)}\n")
+        f.write(f"Total Pools Detected: {len(refined_pools)}\n")
         f.write("=" * 60 + "\n\n")
         
-        for pool_idx, contour in enumerate(valid_pools, 1):
+        for pool_idx, contour in enumerate(refined_pools, 1):
             area = cv2.contourArea(contour)
             perimeter = cv2.arcLength(contour, True)
             x, y, w, h = cv2.boundingRect(contour)
@@ -139,7 +255,6 @@ def detect_pools(image_path, output_dir="output"):
             
             coordinates = contour.squeeze().tolist()
             
-            # Handle both single and multiple points
             if len(contour) > 2:
                 if isinstance(coordinates[0], list):
                     for i, coord in enumerate(coordinates):
@@ -151,20 +266,19 @@ def detect_pools(image_path, output_dir="output"):
     
     print(f"Coordinates saved to: {coords_file}")
     
-    # Draw blue outline on image for ALL pools
+    # Step 7: Draw contours
     output_img = img.copy()
     
-    for pool_idx, contour in enumerate(valid_pools, 1):
-        # Draw thin blue contour (BGR format: Blue = 255, Green = 0, Red = 0)
-        # Thickness = 1 pixel for a fine outline matching the example
+    for pool_idx, contour in enumerate(refined_pools, 1):
+        # Draw very thin blue outline without anti-aliasing for sharpest line
         cv2.drawContours(output_img, [contour], -1, (255, 0, 0), 1)
         
         area = cv2.contourArea(contour)
         print(f"Pool #{pool_idx}: Area = {area:.2f} pixels")
     
-    # Save output image
+    # Save output
     output_image_file = Path(output_dir) / "output_image.jpg"
-    cv2.imwrite(str(output_image_file), output_img)
+    cv2.imwrite(str(output_image_file), output_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
     print(f"Output image saved to: {output_image_file}")
     
     return True
@@ -172,33 +286,35 @@ def detect_pools(image_path, output_dir="output"):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Detect swimming pools in aerial images with high accuracy',
+        description='Detect swimming pools with balanced precision and detailed feedback',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   python detect_pool.py image.jpg
   python detect_pool.py image.jpg --output results
-  
-The script uses strict filtering to minimize false positives:
-- Color-based detection (cyan/blue water)
-- Size filtering (realistic pool dimensions)
-- Shape analysis (compactness, aspect ratio, solidity)
+  python detect_pool.py image.jpg --quiet
+
+Features:
+- Multi-range color detection for different water conditions
+- Balanced geometric filtering
+- Detailed feedback showing why contours are accepted/rejected
+- Debug mask output for troubleshooting
         """
     )
     
     parser.add_argument('image', help='Path to input aerial image')
     parser.add_argument('--output', '-o', default='output',
                        help='Output directory (default: output)')
+    parser.add_argument('--quiet', '-q', action='store_true',
+                       help='Suppress detailed analysis output')
     
     args = parser.parse_args()
     
-    # Check if image exists
     if not Path(args.image).exists():
         print(f"Error: Image file not found: {args.image}")
         sys.exit(1)
     
-    # Detect pools
-    success = detect_pools(args.image, args.output)
+    success = detect_pools(args.image, args.output, verbose=not args.quiet)
     
     if success:
         print("\n✅ Pool detection completed successfully!")

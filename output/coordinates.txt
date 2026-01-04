@@ -1,0 +1,65 @@
+Swimming Pool Detection Results
+Image: image5.jpg
+Total Pools Detected: 1
+============================================================
+
+Pool #1
+Area: 1001.50 square pixels
+Perimeter: 146.16 pixels
+Bounding Box: x=73, y=115, width=48, height=43
+Boundary Coordinates (x, y):
+--------------------------------------------------
+Point 1: (116, 115)
+Point 2: (102, 115)
+Point 3: (101, 116)
+Point 4: (100, 116)
+Point 5: (100, 119)
+Point 6: (99, 120)
+Point 7: (98, 120)
+Point 8: (97, 121)
+Point 9: (90, 121)
+Point 10: (83, 128)
+Point 11: (82, 128)
+Point 12: (81, 129)
+Point 13: (78, 129)
+Point 14: (78, 130)
+Point 15: (73, 135)
+Point 16: (73, 141)
+Point 17: (74, 142)
+Point 18: (74, 144)
+Point 19: (76, 146)
+Point 20: (76, 147)
+Point 21: (81, 152)
+Point 22: (85, 152)
+Point 23: (86, 153)
+Point 24: (86, 154)
+Point 25: (88, 157)
+Point 26: (89, 156)
+Point 27: (90, 156)
+Point 28: (92, 154)
+Point 29: (91, 153)
+Point 30: (91, 150)
+Point 31: (93, 148)
+Point 32: (93, 147)
+Point 33: (100, 140)
+Point 34: (101, 140)
+Point 35: (102, 139)
+Point 36: (103, 139)
+Point 37: (105, 137)
+Point 38: (106, 137)
+Point 39: (107, 136)
+Point 40: (108, 136)
+Point 41: (109, 135)
+Point 42: (110, 135)
+Point 43: (111, 134)
+Point 44: (112, 134)
+Point 45: (113, 133)
+Point 46: (114, 133)
+Point 47: (117, 130)
+Point 48: (117, 129)
+Point 49: (118, 128)
+Point 50: (118, 126)
+Point 51: (120, 123)
+Point 52: (118, 121)
+Point 53: (118, 117)
+
