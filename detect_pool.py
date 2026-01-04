@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Pool Detection Script for Aerial Images - BALANCED VERSION
-Detects swimming pools with precise contours and detailed feedback
+Pool Detection Script for Aerial Images 
 """
 
 import cv2
@@ -17,23 +16,18 @@ def detect_pool_water(img):
     """
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     
-    # Broader but still focused color ranges for pool water
-    # Range 1: Cyan/turquoise (most common pool color)
     lower_cyan = np.array([80, 60, 80])
     upper_cyan = np.array([100, 255, 255])
     mask_cyan = cv2.inRange(hsv, lower_cyan, upper_cyan)
     
-    # Range 2: Blue water
     lower_blue = np.array([95, 80, 90])
     upper_blue = np.array([110, 255, 255])
     mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
     
-    # Range 3: Light cyan (sun reflections)
     lower_light = np.array([85, 40, 150])
     upper_light = np.array([100, 150, 255])
     mask_light = cv2.inRange(hsv, lower_light, upper_light)
     
-    # Combine all masks
     mask = cv2.bitwise_or(mask_cyan, mask_blue)
     mask = cv2.bitwise_or(mask, mask_light)
     
@@ -47,10 +41,8 @@ def clean_mask(mask):
     kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (4, 4))
     
-    # Remove small noise
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
     
-    # Fill small gaps within pools (but not merge separate pools)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium, iterations=1)
     
     return mask
@@ -71,9 +63,8 @@ def filter_pool_contours(contours, img_shape, verbose=True):
     for idx, contour in enumerate(contours, 1):
         area = cv2.contourArea(contour)
         
-        # More lenient size constraints
-        min_area = image_area * 0.001  # 0.1% of image
-        max_area = image_area * 0.20   # 20% of image
+        min_area = image_area * 0.001   
+        max_area = image_area * 0.20    
         
         if verbose:
             print(f"\nContour #{idx}:")
@@ -81,29 +72,27 @@ def filter_pool_contours(contours, img_shape, verbose=True):
         
         if area < min_area:
             if verbose:
-                print(f"  ❌ REJECTED: Too small (min: {min_area:.2f})")
+                print(f"  REJECTED: Too small (min: {min_area:.2f})")
             continue
         
         if area > max_area:
             if verbose:
-                print(f"  ❌ REJECTED: Too large (max: {max_area:.2f})")
+                print(f"  REJECTED: Too large (max: {max_area:.2f})")
             continue
         
-        # Perimeter check
         perimeter = cv2.arcLength(contour, True)
         if perimeter == 0:
             if verbose:
-                print(f"  ❌ REJECTED: Invalid perimeter")
+                print(f"  REJECTED: Invalid perimeter")
             continue
         
-        # Compactness - how circular/square the shape is
         compactness = 4 * np.pi * area / (perimeter * perimeter)
         if verbose:
             print(f"  Compactness: {compactness:.3f} (circle=1.0, square=0.785)")
         
-        if compactness < 0.20:  # More lenient
+        if compactness < 0.20:   
             if verbose:
-                print(f"  ❌ REJECTED: Not compact enough (min: 0.20)")
+                print(f"  REJECTED: Not compact enough (min: 0.20)")
             continue
         
         # Aspect ratio
@@ -112,12 +101,11 @@ def filter_pool_contours(contours, img_shape, verbose=True):
         if verbose:
             print(f"  Aspect ratio: {aspect_ratio:.2f} (1.0=square)")
         
-        if aspect_ratio > 5:  # More lenient
+        if aspect_ratio > 5:  
             if verbose:
-                print(f"  ❌ REJECTED: Too elongated (max: 5)")
+                print(f"  REJECTED: Too elongated (max: 5)")
             continue
         
-        # Solidity - how "solid" vs "hollow" the shape is
         hull = cv2.convexHull(contour)
         hull_area = cv2.contourArea(hull)
         if hull_area > 0:
@@ -125,14 +113,14 @@ def filter_pool_contours(contours, img_shape, verbose=True):
             if verbose:
                 print(f"  Solidity: {solidity:.3f} (1.0=perfect convex)")
             
-            if solidity < 0.60:  # More lenient
+            if solidity < 0.60:  
                 if verbose:
-                    print(f"  ❌ REJECTED: Too irregular (min: 0.60)")
+                    print(f"  REJECTED: Too irregular (min: 0.60)")
                 continue
         
         # All checks passed!
         if verbose:
-            print(f"  ✅ ACCEPTED as pool")
+            print(f"  ACCEPTED as pool")
         
         valid_pools.append(contour)
     
@@ -148,7 +136,6 @@ def refine_pool_boundary(contour, img, mask):
     """
     Refine pool boundary using edge detection
     """
-    # Get bounding box with padding
     x, y, w, h = cv2.boundingRect(contour)
     padding = 10
     x1 = max(0, x - padding)
@@ -156,26 +143,21 @@ def refine_pool_boundary(contour, img, mask):
     x2 = min(img.shape[1], x + w + padding)
     y2 = min(img.shape[0], y + h + padding)
     
-    # Extract ROI
     roi_mask = mask[y1:y2, x1:x2]
     
-    # Find contour in ROI with more detail
     roi_contours, _ = cv2.findContours(roi_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     
     if roi_contours:
-        # Get largest contour
+
         refined = max(roi_contours, key=cv2.contourArea)
         
-        # Adjust back to original coordinates
         refined = refined + np.array([x1, y1])
         
-        # Minimal smoothing to preserve detail
         epsilon = 0.002 * cv2.arcLength(refined, True)
         refined = cv2.approxPolyDP(refined, epsilon, True)
         
         return refined
     
-    # Fallback
     epsilon = 0.003 * cv2.arcLength(contour, True)
     return cv2.approxPolyDP(contour, epsilon, True)
 
@@ -220,7 +202,6 @@ def detect_pools(image_path, output_dir="output", verbose=True):
         print("   3. If pool is there but rejected: filters are too strict")
         return False
     
-    # Sort by area
     valid_pools = sorted(valid_pools, key=cv2.contourArea, reverse=True)
     
     print(f"✅ {len(valid_pools)} pool(s) detected successfully!")
@@ -270,7 +251,6 @@ def detect_pools(image_path, output_dir="output", verbose=True):
     output_img = img.copy()
     
     for pool_idx, contour in enumerate(refined_pools, 1):
-        # Draw very thin blue outline without anti-aliasing for sharpest line
         cv2.drawContours(output_img, [contour], -1, (255, 0, 0), 1)
         
         area = cv2.contourArea(contour)
@@ -317,11 +297,11 @@ Features:
     success = detect_pools(args.image, args.output, verbose=not args.quiet)
     
     if success:
-        print("\n✅ Pool detection completed successfully!")
-        print(f"📁 Check the '{args.output}' directory for results")
+        print("\n Pool detection completed successfully!")
+        print(f" Check the '{args.output}' directory for results")
         sys.exit(0)
     else:
-        print("\n❌ Pool detection failed")
+        print("\n Pool detection failed")
         sys.exit(1)
 
 
