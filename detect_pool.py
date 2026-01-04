@@ -196,7 +196,7 @@ def detect_pools(image_path, output_dir="output", verbose=True):
     valid_pools = filter_pool_contours(contours, img.shape, verbose=verbose)
     
     if not valid_pools:
-        print("\n⚠️  No valid pools found. Try:")
+        print("\n  No valid pools found. Try:")
         print("   1. Check debug_mask.jpg - is the pool water white?")
         print("   2. If pool is missing: color detection needs adjustment")
         print("   3. If pool is there but rejected: filters are too strict")
@@ -204,7 +204,7 @@ def detect_pools(image_path, output_dir="output", verbose=True):
     
     valid_pools = sorted(valid_pools, key=cv2.contourArea, reverse=True)
     
-    print(f"✅ {len(valid_pools)} pool(s) detected successfully!")
+    print(f" {len(valid_pools)} pool(s) detected successfully!")
     
     # Step 5: Refine boundaries
     refined_pools = []
